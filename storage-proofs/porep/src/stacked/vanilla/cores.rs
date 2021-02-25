@@ -155,7 +155,10 @@ fn core_groups(cores_per_unit: usize) -> Option<Vec<Mutex<Vec<CoreIndex>>>> {
     assert_eq!(0, core_count % cache_count);
     let mut group_size = core_count / cache_count;
     let mut group_count = cache_count;
-
+    if group_size == 2 {
+        group_size = 4;
+        group_count = core_count / group_size;
+    };
     if cache_count <= 1 {
         // If there are not more than one shared caches, there is no benefit in trying to group cores by cache.
         // In that case, prefer more groups so we can still bind cores and also get some parallelism.

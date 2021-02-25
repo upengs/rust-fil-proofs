@@ -40,6 +40,7 @@ pub fn create_disk_tree<Tree: MerkleTreeTrait>(
         DiskTree::from_store_configs(base_tree_leafs, configs)
     } else {
         ensure!(configs.len() == 1, "Invalid tree-shape specified");
+        trace!("======configs={:?}", &configs[0]);
         let store = DiskStore::new_from_disk(base_tree_len, Tree::Arity::to_usize(), &configs[0])?;
 
         DiskTree::from_data_store(store, base_tree_leafs)

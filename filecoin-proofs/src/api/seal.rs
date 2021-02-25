@@ -188,6 +188,7 @@ where
     Ok(out)
 }
 
+// wp_p2
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase2<R, S, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -277,6 +278,7 @@ where
         _,
     >>::setup(&compound_setup_params)?;
 
+    // replicate_phase2
     let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
         &compound_public_params.vanilla_params,
         labels,
