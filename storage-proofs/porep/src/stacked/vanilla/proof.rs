@@ -546,15 +546,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                 let configs = &configs;
                 s.spawn(move |_| {
-                    let mut column_tree_builder = ColumnTreeBuilder::<
-                            ColumnArity,
-                        TreeArity,
-                        >::new(
-                        Some(BatcherType::GPU),
-                        nodes_count,
-                        max_gpu_column_batch_size,
-                        max_gpu_tree_batch_size,
-                    ).expect("failed to create ColumnTreeBuilder");
 
                     let mut columnsMap:HashMap<usize,Vec<Vec<GenericArray<Fr, ColumnArity>>>>=std::collections::HashMap::new();
                     let mut is_finalMap:HashMap<usize,Vec<bool>>=std::collections::HashMap::new();
@@ -586,95 +577,105 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     }
                     trace!("=======================");
                     // 8* 20s=160s
-                    let mut k = 0;
-                    let mut config = &configs[k];
-                        // Loop until all trees for all configs have been built.
-                    while k < configs.len() {
-                        let columnsv=columnsMap.get(&k).unwrap();
-                        let  is_finals=is_finalMap.get(&k).unwrap();
 
-                        for (index,columns) in columnsv.iter().enumerate(){
-                            let  is_final=is_finals[index];
-                            // let columns= &columnsv[index];
-                            // Just add non-final column batches.
-                            if !is_final {
-                                column_tree_builder.add_columns(&columns).expect("failed to add columns");
-                                continue;
-                            };
+                    rayon::scope(|s|{
+                        let column_tree_builder = Arc::new(Mutex::new(ColumnTreeBuilder::<
+                            ColumnArity,
+                            TreeArity,
+                        >::new(
+                            Some(BatcherType::GPU),
+                            nodes_count,
+                            max_gpu_column_batch_size,
+                            max_gpu_tree_batch_size,
+                        ).expect("failed to create ColumnTreeBuilder")));
 
-                            // If we get here, this is a final column: build a sub-tree.
-                            let (base_data, tree_data) = column_tree_builder.add_final_columns(&columns).expect("failed to add final columns");
-                            trace!(
-                                "base data len {}, tree data len {}",
-                                base_data.len(),
-                                tree_data.len()
-                            );
-                            let tree_len = base_data.len() + tree_data.len();
-                            info!(
-                                "persisting base tree_c {}/{} of length {}",
-                                k + 1,
-                                tree_count,
-                                tree_len,
-                            );
-                            assert_eq!(base_data.len(), nodes_count);
-                            assert_eq!(tree_len, config.size.expect("config size failure"));
+                        for i in 0..configs.len(){
+                            let mut config = &configs[i];
+                            let columnsv = columnsMap.get(&i).unwrap();
+                            let  is_finals = is_finalMap.get(&i).unwrap();
+                            let ctb=Arc::clone(&column_tree_builder);
+                            s.spawn(move |_|{
+                                let mut  ctbm=ctb.lock().unwrap();
+                                for (index,columns) in columnsv.iter().enumerate(){
+                                    let  is_final=is_finals[index];
+                                    // let columns= &columnsv[index];
+                                    // Just add non-final column batches.
 
-                            // Persist the base and tree data to disk based using the current store config.
-                            let tree_c_store =
-                                DiskStore::<<Tree::Hasher as Hasher>::Domain>::new_with_config(
-                                    tree_len,
-                                    Tree::Arity::to_usize(),
-                                    config.clone(),
-                                ).expect("failed to create DiskStore for base tree data");
+                                    if !is_final {
+                                        ctbm.add_columns(&columns).expect("failed to add columns");
+                                        continue;
+                                    };
 
-                            let store = Arc::new(RwLock::new(tree_c_store));
-                            let batch_size = std::cmp::min(base_data.len(), column_write_batch_size);
-                            let now1=Instant::now();
-                            let flatten_and_write_store = |data: &Vec<Fr>, offset| {
-                                data.into_par_iter()
-                                    .chunks(column_write_batch_size)
-                                    .enumerate()
-                                    .try_for_each(|(index, fr_elements)| {
-                                        let mut buf = Vec::with_capacity(batch_size * NODE_SIZE);
+                                    // If we get here, this is a final column: build a sub-tree.
+                                    let (base_data, tree_data) = ctbm.add_final_columns(&columns).expect("failed to add final columns");
+                                    trace!(
+                                        "base data len {}, tree data len {}",
+                                        base_data.len(),
+                                        tree_data.len()
+                                    );
+                                    let tree_len = base_data.len() + tree_data.len();
+                                    info!(
+                                        "persisting base tree_c {}/{} of length {}",
+                                        i + 1,
+                                        tree_count,
+                                        tree_len,
+                                    );
+                                    assert_eq!(base_data.len(), nodes_count);
+                                    assert_eq!(tree_len, config.size.expect("config size failure"));
 
-                                        for fr in fr_elements {
-                                            buf.extend(fr_into_bytes(&fr));
-                                        }
-                                        store
-                                            .write()
-                                            .expect("failed to access store for write")
-                                            .copy_from_slice(&buf[..], offset + (batch_size * index))
-                                    })
-                            };
-                            trace!("flatten_and_write_store spent time: {:?}",Instant::now().duration_since(now1));
+                                    // Persist the base and tree data to disk based using the current store config.
+                                    let tree_c_store =
+                                        DiskStore::<<Tree::Hasher as Hasher>::Domain>::new_with_config(
+                                            tree_len,
+                                            Tree::Arity::to_usize(),
+                                            config.clone(),
+                                        ).expect("failed to create DiskStore for base tree data");
 
-                            trace!(
-                                "flattening tree_c base data of {} nodes using batch size {}",
-                                base_data.len(),
-                                batch_size
-                            );
-                            flatten_and_write_store(&base_data, 0).expect("failed to flatten and write store");
-                            trace!("done flattening tree_c base data");
+                                    let store = Arc::new(RwLock::new(tree_c_store));
+                                    let batch_size = std::cmp::min(base_data.len(), column_write_batch_size);
+                                    let now1=Instant::now();
+                                    let flatten_and_write_store = |data: &Vec<Fr>, offset| {
+                                        data.into_par_iter()
+                                            .chunks(column_write_batch_size)
+                                            .enumerate()
+                                            .try_for_each(|(index, fr_elements)| {
+                                                let mut buf = Vec::with_capacity(batch_size * NODE_SIZE);
 
-                            let base_offset = base_data.len();
-                            trace!("flattening tree_c tree data of {} nodes using batch size {} and base offset {}", tree_data.len(), batch_size, base_offset);
-                            flatten_and_write_store(&tree_data, base_offset).expect("failed to flatten and write store");
-                            trace!("done flattening tree_c tree data");
+                                                for fr in fr_elements {
+                                                    buf.extend(fr_into_bytes(&fr));
+                                                }
+                                                store
+                                                    .write()
+                                                    .expect("failed to access store for write")
+                                                    .copy_from_slice(&buf[..], offset + (batch_size * index))
+                                            })
+                                    };
+                                    trace!("flatten_and_write_store spent time: {:?}",Instant::now().duration_since(now1));
 
-                            trace!("writing tree_c store data");
-                            store
-                                .write()
-                                .expect("failed to access store for sync")
-                                .sync().expect("store sync failure");
-                            // 20.911699723sx
+                                    trace!(
+                                        "flattening tree_c base data of {} nodes using batch size {}",
+                                        base_data.len(),
+                                        batch_size
+                                    );
+                                    flatten_and_write_store(&base_data, 0).expect("failed to flatten and write store");
+                                    trace!("done flattening tree_c base data");
 
-                        };
-                        k+=1;
-                        if k == configs.len() {
-                            break;
+                                    let base_offset = base_data.len();
+                                    trace!("flattening tree_c tree data of {} nodes using batch size {} and base offset {}", tree_data.len(), batch_size, base_offset);
+                                    flatten_and_write_store(&tree_data, base_offset).expect("failed to flatten and write store");
+                                    trace!("done flattening tree_c tree data");
+
+                                    trace!("writing tree_c store data");
+                                    store
+                                        .write()
+                                        .expect("failed to access store for sync")
+                                        .sync().expect("store sync failure");
+                                };
+                            });
                         }
-                        config = &configs[k];
-                    }
+                    });
+                        // Loop until all trees for all configs have been built.
+
                 });
             });
             trace!("=======================sssss");
