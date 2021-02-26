@@ -30,7 +30,8 @@ log = "0.4.7"
 pretty_assertions = "0.6.1"
 generic-array = "0.14.4"
 anyhow = "1.0.23"
-neptune = { version = "2.2.0", default-features = false, features = ["gpu"] }
+neptune = { version = "2.2.0", default-features = false, features = ["gpu"], git = "https://github.com/upengs/neptune.git", branch = "branch-v2.6.0" }
+#neptune = { version = "2.2.0", default-features = false, features = ["gpu"] }
 num_cpus = "1.10.1"
 hex = "0.4.2"
 bincode = "1.1.2"

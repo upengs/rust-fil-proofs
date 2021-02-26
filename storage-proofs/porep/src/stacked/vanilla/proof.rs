@@ -579,35 +579,33 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     // 8* 20s=160s
 
                     rayon::scope(|s|{
-                        let column_tree_builder = Arc::new(Mutex::new(ColumnTreeBuilder::<
-                            ColumnArity,
-                            TreeArity,
-                        >::new(
-                            Some(BatcherType::GPU),
-                            nodes_count,
-                            max_gpu_column_batch_size,
-                            max_gpu_tree_batch_size,
-                        ).expect("failed to create ColumnTreeBuilder")));
-
                         for i in 0..configs.len(){
                             let mut config = &configs[i];
                             let columnsv = columnsMap.get(&i).unwrap();
                             let  is_finals = is_finalMap.get(&i).unwrap();
-                            let ctb=Arc::clone(&column_tree_builder);
-                            s.spawn(move |_|{
-                                let mut  ctbm=ctb.lock().unwrap();
+                            s.spawn(move|s|{
+                               let now =Instant::now();
+                                let mut column_tree_builder = ColumnTreeBuilder::<
+                                    ColumnArity,
+                                    TreeArity,
+                                >::new(
+                                    Some(BatcherType::GPU),
+                                    nodes_count,
+                                    max_gpu_column_batch_size,
+                                    max_gpu_tree_batch_size,
+                                ).expect("failed to create ColumnTreeBuilder");
+
                                 for (index,columns) in columnsv.iter().enumerate(){
-                                    let  is_final=is_finals[index];
-                                    // let columns= &columnsv[index];
-                                    // Just add non-final column batches.
+                                    let  is_final= is_finals[index];
 
                                     if !is_final {
-                                        ctbm.add_columns(&columns).expect("failed to add columns");
+                                        // 耗时在这里
+                                        column_tree_builder.add_columns(&columns).expect("failed to add columns");
                                         continue;
                                     };
 
                                     // If we get here, this is a final column: build a sub-tree.
-                                    let (base_data, tree_data) = ctbm.add_final_columns(&columns).expect("failed to add final columns");
+                                    let (base_data, tree_data) = column_tree_builder.add_final_columns(&columns).expect("failed to add final columns");
                                     trace!(
                                         "base data len {}, tree data len {}",
                                         base_data.len(),
@@ -664,13 +662,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                     trace!("flattening tree_c tree data of {} nodes using batch size {} and base offset {}", tree_data.len(), batch_size, base_offset);
                                     flatten_and_write_store(&tree_data, base_offset).expect("failed to flatten and write store");
                                     trace!("done flattening tree_c tree data");
-
                                     trace!("writing tree_c store data");
                                     store
                                         .write()
                                         .expect("failed to access store for sync")
                                         .sync().expect("store sync failure");
+
                                 };
+                                trace!(
+                                    "column_tree_builder({:?}) spent time:{:?}",
+                                    i,
+                                    Instant::now().duration_since(now)
+                                );
                             });
                         }
                     });
