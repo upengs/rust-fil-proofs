@@ -6,6 +6,7 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use anyhow::Context;
 use bellperson::bls::Fr;
+use crossbeam::thread;
 // extern crate scoped_threadpool;
 use scoped_threadpool::Pool;
 
@@ -37,6 +38,7 @@ use typenum::{U11, U2, U8};
 use super::{
     challenges::LayerChallenges,
     column::Column,
+    cores::{bind_core, checkout_core_group, CoreIndex},
     create_label,
     graph::StackedBucketGraph,
     hash::hash_single_column,
@@ -57,6 +59,7 @@ use storage_proofs_core::fr32::fr_into_bytes;
 use crate::encode::{decode, encode};
 use crate::PoRep;
 use bellperson::domain::Scalar;
+use bellperson::gadgets::Assignment;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -575,16 +578,31 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         }
                         i+=1;
                     }
-                    trace!("=======================");
-                    // 8* 20s=160s
 
-                    rayon::scope(|s|{
+                    let core_group = Arc::new(checkout_core_group());
+                    let cga=core_group.clone();
+                    // 8* 20s=160s
+                    thread::scope(|s|{
+                        let mut runners = Vec::with_capacity(configs.len());
+                        // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
                         for i in 0..configs.len(){
                             let mut config = &configs[i];
                             let columnsv = columnsMap.get(&i).unwrap();
                             let  is_finals = is_finalMap.get(&i).unwrap();
-                            s.spawn(move|s|{
-                               let now =Instant::now();
+
+                            let core_index = if let Some(cg) = &*cga {
+                                cg.get(i + 1)
+                            } else {
+                                None
+                            };
+
+                            runners.push(  s.spawn(move|s|{
+                                // This could fail, but we will ignore the error if so.
+                                // It will be logged as a warning by `bind_core`.
+                                debug!("binding core in producer thread {}", i);
+                                // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
+                                let _cleanup_handle = core_index.map(|c| bind_core(*c));
+                                let now =Instant::now();
                                 let mut column_tree_builder = ColumnTreeBuilder::<
                                     ColumnArity,
                                     TreeArity,
@@ -674,7 +692,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                     i,
                                     Instant::now().duration_since(now)
                                 );
-                            });
+                            }))
+                        }
+
+                        for runner in runners {
+                            runner.join().unwrap();
                         }
                     });
                         // Loop until all trees for all configs have been built.
