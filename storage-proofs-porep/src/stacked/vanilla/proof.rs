@@ -142,6 +142,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         assert!(challenge > 0, "Invalid challenge");
 
                         // Initial data layer openings (c_X in Comm_D)
+                        // merkle tree gen proof
                         let comm_d_proof = t_aux.tree_d.gen_proof(challenge)?;
                         assert!(comm_d_proof.validate(challenge));
 
@@ -181,6 +182,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                         // Final replica layer openings
                         trace!("final replica layer openings");
+
+                        // merkle tree gen proof
                         let comm_r_last_proof = t_aux.tree_r_last.gen_cached_proof(
                             challenge,
                             Some(t_aux.tree_r_last_config_rows_to_discard),

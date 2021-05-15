@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use log::info;
+use rayon::prelude::*;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
     merkle::MerkleTreeTrait,
@@ -122,14 +123,16 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
         FallbackPoStCompound::setup(&setup_params)?;
     let groth_params = get_post_params::<Tree>(&post_config)?;
 
+    // 生成 merkle tree
     let trees: Vec<_> = replicas
-        .iter()
+        .par_iter()
         .map(|(sector_id, replica)| {
-            replica
+            let merkle_tree = replica
                 .merkle_tree(post_config.sector_size)
                 .with_context(|| {
                     format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
-                })
+                });
+            merkle_tree
         })
         .collect::<Result<_>>()?;
 
@@ -153,18 +156,19 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
             comm_r_last,
         });
     }
-
+    // 构造证明输入参数
     let pub_inputs = fallback::PublicInputs {
         randomness: randomness_safe,
         prover_id: prover_id_safe,
         sectors: &pub_sectors,
         k: None,
     };
-
+    // 构造证明输入参数
     let priv_inputs = fallback::PrivateInputs::<Tree> {
         sectors: &priv_sectors,
     };
 
+    // 开始证明
     let proof = FallbackPoStCompound::prove(&pub_params, &pub_inputs, &priv_inputs, &groth_params)?;
 
     info!("generate_window_post:finish");
@@ -202,7 +206,7 @@ pub fn verify_window_post<Tree: 'static + MerkleTreeTrait>(
         FallbackPoStCompound::setup(&setup_params)?;
 
     let pub_sectors: Vec<_> = replicas
-        .iter()
+        .into_par_iter()
         .map(|(sector_id, replica)| {
             let comm_r = replica.safe_comm_r().with_context(|| {
                 format!("verify_window_post: safe_comm_r failed: {:?}", sector_id)

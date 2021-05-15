@@ -5,6 +5,7 @@ use bellperson::{
 };
 use ff::Field;
 use filecoin_hashers::{HashFunction, Hasher};
+use rayon::prelude::*;
 use rayon::prelude::{ParallelIterator, ParallelSlice};
 use storage_proofs_core::{
     compound_proof::CircuitComponent,
@@ -72,13 +73,13 @@ impl<Tree: 'static + MerkleTreeTrait> Sector<Tree> {
     ) -> Result<Self> {
         let leafs = vanilla_proof
             .leafs()
-            .iter()
+            .par_iter()
             .map(|l| Some((*l).into()))
             .collect();
 
         let paths = vanilla_proof
             .as_options()
-            .into_iter()
+            .into_par_iter()
             .map(Into::into)
             .collect();
 

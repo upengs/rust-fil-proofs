@@ -12,6 +12,7 @@ use rayon::prelude::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Mutex;
 use storage_proofs_core::{
     api_version::ApiVersion,
     error::{Error, Result},
@@ -176,6 +177,7 @@ pub fn generate_sector_challenges<T: Domain>(
     prover_id: T,
 ) -> Result<Vec<u64>> {
     (0..challenge_count)
+        .into_par_iter()
         .map(|n| generate_sector_challenge(randomness, n, sector_set_len, prover_id))
         .collect()
 }
@@ -245,7 +247,6 @@ pub fn generate_leaf_challenge_inner<T: Domain>(
     let hash = hasher.finalize();
 
     let leaf_challenge = LittleEndian::read_u64(&hash[..8]);
-
     leaf_challenge % (pub_params.sector_size / NODE_SIZE as u64)
 }
 
@@ -358,17 +359,24 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
             num_sectors_per_chunk,
         );
 
-        let mut partition_proofs = Vec::new();
+        let partition_proofs = Mutex::new(Vec::new());
 
         // Use `BTreeSet` so failure result will be canonically ordered (sorted).
-        let mut faulty_sectors = BTreeSet::new();
+        let faulty_sectors = Mutex::new(BTreeSet::new());
 
-        for (j, (pub_sectors_chunk, priv_sectors_chunk)) in pub_inputs
+        let pub_sectors_chunk = pub_inputs
             .sectors
             .chunks(num_sectors_per_chunk)
-            .zip(priv_inputs.sectors.chunks(num_sectors_per_chunk))
-            .enumerate()
-        {
+            .collect::<Vec<_>>();
+
+        let priv_sectors_chunk = priv_inputs
+            .sectors
+            .chunks(num_sectors_per_chunk)
+            .collect::<Vec<_>>();
+
+        (0..pub_sectors_chunk.len()).into_par_iter().for_each(|j| {
+            let pub_sectors_chunk = pub_sectors_chunk[j];
+            let priv_sectors_chunk = priv_sectors_chunk[j];
             let (mut proofs, mut faults) = pub_sectors_chunk
                 .par_iter()
                 .zip(priv_sectors_chunk.par_iter())
@@ -406,6 +414,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                                     pub_params,
                                     challenge_index,
                                 );
+                                // merkle tree gen cached proof
                                 let proof = tree.gen_cached_proof(
                                     challenged_leaf as usize,
                                     Some(rows_to_discard),
@@ -476,14 +485,25 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                 proofs.push(proofs[proofs.len() - 1].clone());
             }
 
-            partition_proofs.push(Proof { sectors: proofs });
-            faulty_sectors.append(&mut faults);
-        }
+            partition_proofs
+                .lock()
+                .unwrap()
+                .push(Proof { sectors: proofs });
+            faulty_sectors.lock().unwrap().append(&mut faults);
+        });
 
-        if faulty_sectors.is_empty() {
-            Ok(partition_proofs)
+        if faulty_sectors.lock().unwrap().to_owned().is_empty() {
+            Ok(partition_proofs.lock().unwrap().to_owned())
         } else {
-            Err(Error::FaultySectors(faulty_sectors.into_iter().collect()).into())
+            Err(Error::FaultySectors(
+                faulty_sectors
+                    .lock()
+                    .unwrap()
+                    .to_owned()
+                    .into_iter()
+                    .collect(),
+            )
+            .into())
         }
     }
 

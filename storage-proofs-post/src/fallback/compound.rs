@@ -6,6 +6,7 @@ use bellperson::{
     Circuit,
 };
 use filecoin_hashers::Hasher;
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use storage_proofs_core::{
     compound_proof::{CircuitComponent, CompoundProof},
@@ -153,6 +154,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait>
         pub_params: &<FallbackPoSt<'a, Tree> as ProofScheme<'a>>::PublicParams,
     ) -> FallbackPoStCircuit<Tree> {
         let sectors = (0..pub_params.sector_count)
+            .into_par_iter()
             .map(|_| Sector::blank_circuit(pub_params))
             .collect();
 

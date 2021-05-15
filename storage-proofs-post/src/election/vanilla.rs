@@ -379,6 +379,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait> ProofScheme<'a> for ElectionPoSt<'a, T
                     (0..pub_params.challenged_nodes)
                         .into_par_iter()
                         .map(move |i| {
+                            // merkle tree gen cache proof
                             tree.gen_cached_proof(challenged_leaf_start as usize + i, None)
                         })
                 })

@@ -285,8 +285,9 @@ where
             let tree_r_config_rows_to_discard = priv_inputs.tree_r_config_rows_to_discard;
 
             let data = tree_r.read_at(challenge)?;
-            let tree_proof =
+            let tree_proof = // merkle tree gen cached proof
                 tree_r.gen_cached_proof(challenge, Some(tree_r_config_rows_to_discard))?;
+
             replica_nodes.push(DataProof {
                 proof: tree_proof,
                 data,
@@ -298,6 +299,7 @@ where
 
             for p in &parents {
                 replica_parentsi.push((*p, {
+                    // merkle tree gen cached proof
                     let proof = tree_r
                         .gen_cached_proof(*p as usize, Some(tree_r_config_rows_to_discard))?;
                     DataProof {

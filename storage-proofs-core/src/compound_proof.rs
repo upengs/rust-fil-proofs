@@ -84,7 +84,7 @@ where
         // This will always run at least once, since there cannot be zero partitions.
         ensure!(partition_count > 0, "There must be partitions");
 
-        info!("vanilla_proofs:start");
+        info!("vanilla_proofs:start"); // step 1 cpu
         let vanilla_proofs = S::prove_all_partitions(
             &pub_params.vanilla_params,
             &pub_in,
@@ -98,7 +98,7 @@ where
             S::verify_all_partitions(&pub_params.vanilla_params, &pub_in, &vanilla_proofs)?;
         ensure!(sanity_check, "sanity check failed");
 
-        info!("snark_proof:start");
+        info!("snark_proof:start"); // step 2 gpu
         let groth_proofs = Self::circuit_proofs(
             pub_in,
             vanilla_proofs,
@@ -262,7 +262,7 @@ where
         };
 
         groth_proofs
-            .into_iter()
+            .into_par_iter()
             .map(|groth_proof| {
                 let mut proof_vec = Vec::new();
                 groth_proof.write(&mut proof_vec)?;

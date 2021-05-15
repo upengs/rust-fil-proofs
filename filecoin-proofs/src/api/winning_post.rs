@@ -1,6 +1,7 @@
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use log::info;
+use rayon::prelude::*;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
     merkle::MerkleTreeTrait,
@@ -130,7 +131,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     let groth_params = get_post_params::<Tree>(&post_config)?;
 
     let trees = replicas
-        .iter()
+        .par_iter()
         .map(|(sector_id, replica)| {
             replica
                 .merkle_tree(post_config.sector_size)
